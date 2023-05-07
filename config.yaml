@@ -1,0 +1,7 @@
+BOT:
+  TOKEN: your_bot_token
+  CHAT_ID: [chat_id_1,
+            chat_id_2,
+           ] # ID чата для работы
+  
+DATAPATH: path/to/datafile.xlsx
