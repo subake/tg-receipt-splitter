@@ -1,7 +1,4 @@
-import yaml
-
 from my_bot import ReceiptSplitterBot
-
 
 
 if __name__ == '__main__':
