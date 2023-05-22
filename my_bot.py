@@ -170,8 +170,6 @@ class ReceiptSplitterBot():
         def add_receipt(message):
             if not check_group(message):
                 return
-            
-            bot.send_chat_action(message.chat.id, 'typing')
 
             usr_list = [message.text[e.offset+1:e.offset+e.length]
                         for e in message.entities if e.type == 'mention']
