@@ -2,6 +2,7 @@ import os
 import sys
 import yaml
 import re
+import time
 
 import inspect
 
@@ -62,7 +63,7 @@ class ReceiptSplitterBot():
         # TODO: создание лог файлов для пользователей
 
         # Проверка чата на право использования бота
-        def chek_group(msg):
+        def check_group(msg):
             if msg.chat.id in self.chat_list:
                 return True
             else:
@@ -71,34 +72,43 @@ class ReceiptSplitterBot():
                 return False
 
         # Проверка на наличие страницы группы в yaml файле + проверка списка участников
-        def chek_group_users(msg, usr_list=None):
+        def check_group_users(msg, usr_list=None):
             # Добавление нового словаря под новый чат
             if msg.chat.id not in DATA.keys():
                 DATA[msg.chat.id] = {}
+                DATA[msg.chat.id]['users'] = {}
 
             new_usrs = []
             # добавление автора сообщения
-            if msg.from_user.username not in DATA[msg.chat.id].keys():
-                DATA[msg.chat.id][msg.from_user.username] = 0
+            if msg.from_user.username not in DATA[msg.chat.id]['users'].keys():
+                DATA[msg.chat.id]['users'][msg.from_user.username] = 0
                 new_usrs += [msg.from_user.username]
+
+            # проверка на пересылку сообщения
+            if msg.forward_from is not None:
+                if msg.forward_from.username not in DATA[msg.chat.id]['users'].keys():
+                    DATA[msg.chat.id]['users'][msg.forward_from.username] = 0
+                    new_usrs += [msg.forward_from.username]
 
             # добавление нового списка участников
             if usr_list is not None:
                 for usr in usr_list:
-                    if usr not in DATA[msg.chat.id].keys():
-                        DATA[msg.chat.id][usr] = 0
+                    if usr not in DATA[msg.chat.id]['users'].keys():
+                        DATA[msg.chat.id]['users'][usr] = 0
                         new_usrs += [usr]
 
             if len(new_usrs):
                 bot.send_message(
                     msg.chat.id, f'Welcome new debtors: {", ".join(new_usrs)}')
+            
+            DATA[msg.chat.id]['last_change_id'] = msg.id
 
         # Совершение платежа: кто заплатил, сумма, кто должен
         def make_payment(chat_id, payer, price, debtors):
             piece = price / len(debtors)
             for usr in debtors:
-                DATA[chat_id][usr] -= piece
-            DATA[chat_id][payer] += price
+                DATA[chat_id]['users'][usr] -= piece
+            DATA[chat_id]['users'][payer] += price
 
             save_data()
 
@@ -109,7 +119,7 @@ class ReceiptSplitterBot():
         # TODO: Описание бота и инструкции (дописать docstring)
         @bot.message_handler(commands=['start'])
         def send_guide(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
 
             bot.send_message(
@@ -118,7 +128,7 @@ class ReceiptSplitterBot():
         # Функция для добавления новых пользователей
         @bot.message_handler(commands=['new'])
         def add_user(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
 
             # Список новых пользователей
@@ -127,7 +137,7 @@ class ReceiptSplitterBot():
 
             # print(usr_list)
 
-            chek_group_users(message, usr_list)
+            check_group_users(message, usr_list)
 
             save_data()
 
@@ -135,9 +145,9 @@ class ReceiptSplitterBot():
 
         @bot.message_handler(commands=['rename'])
         def rename_user(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
-            chek_group_users(message)
+            check_group_users(message)
 
             save_data()
 
@@ -146,9 +156,9 @@ class ReceiptSplitterBot():
         # TODO: написать функцию для удаления пользователей
         @bot.message_handler(commands=['remove'])
         def remove_user(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
-            chek_group_users(message)
+            check_group_users(message)
 
             save_data()
 
@@ -158,15 +168,17 @@ class ReceiptSplitterBot():
         # Функция для выставления счета всем или между конкретными людьми
         @bot.message_handler(commands=['add'])
         def add_receipt(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
+            
+            bot.send_chat_action(message.chat.id, 'typing')
 
             usr_list = [message.text[e.offset+1:e.offset+e.length]
                         for e in message.entities if e.type == 'mention']
 
-            # print(usr_list)
+            # print(message)
 
-            chek_group_users(message, usr_list)
+            check_group_users(message, usr_list)
 
             # print(message.text)
             price = re.findall("([-+]?\d+(?:[.,]\d+)?)", message.text)[0]
@@ -180,6 +192,9 @@ class ReceiptSplitterBot():
 
             # определение плательщика
             payer = message.from_user.username
+            if message.forward_from is not None:
+                payer = message.forward_from.username
+
             debtors_n = 0
             if len(usr_list) > 0:
                 for e in message.entities:
@@ -191,7 +206,7 @@ class ReceiptSplitterBot():
 
             # определение должников
             notme = 'notme' in message.text.split()
-            usrs = DATA[message.chat.id].keys()
+            usrs = DATA[message.chat.id]['users'].keys()
             if len(usr_list) - debtors_n > 0:
                 usrs = usr_list[debtors_n:]
                 if payer not in usrs:
@@ -212,13 +227,20 @@ class ReceiptSplitterBot():
 
             # get_balance(message)
 
+        # TODO: Функция для подгрузки истории платежей, произошедших в режиме офлайн
+        @bot.message_handler(commands=['sync'])
+        def sync_messages(message):
+            if not check_group(message):
+                return
+
+
         # Функция для вывода 'чья очередь платить'
         @bot.message_handler(commands=['turn'])
         def turn_to_pay(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
 
-            chat_balance = DATA[message.chat.id]
+            chat_balance = DATA[message.chat.id]['users']
 
             min_bal = 10**10
             min_usr = ''
@@ -231,7 +253,7 @@ class ReceiptSplitterBot():
         # TODO: написать функцию для вывода платежей
         @bot.message_handler(commands=['checkout'])
         def get_payments(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
 
             # TODO: расчет минимального количества платежей
@@ -240,10 +262,10 @@ class ReceiptSplitterBot():
         # Функция для возвращения баланса участников (кто в каком плюсе/минусе)
         @bot.message_handler(commands=['balance'])
         def get_balance(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
 
-            chat_balance = DATA[message.chat.id]
+            chat_balance = DATA[message.chat.id]['users']
             chat_balance = {k: v for k, v in
                             sorted(chat_balance.items(), key=lambda item: -item[1])}
             txt = ''.join([f'{usr} : {bal:.2f}\n' for
@@ -255,12 +277,14 @@ class ReceiptSplitterBot():
         # Функция для очистки истории долгов (обнуление баланса)
         @bot.message_handler(commands=['clear'])
         def clear_history(message):
-            if not chek_group(message):
+            if not check_group(message):
                 return
 
+            check_group_users(message)
+
             # TODO: нужно получить дополнительное подтверждение
-            DATA[message.chat.id] = {
-                usr: 0 for usr in DATA[message.chat.id].keys()}
+            DATA[message.chat.id]['users'] = {
+                usr: 0 for usr in DATA[message.chat.id]['users'].keys()}
             save_data()
 
             bot.reply_to(message, 'Cleared balance')
@@ -283,3 +307,8 @@ class ReceiptSplitterBot():
                 sys.exit(130)
             except SystemExit:
                 os._exit(130)
+
+if __name__ == '__main__':
+    # TODO: избавиться от класса бота и перейти в main
+    # TODO: перейти в ассинхронный режим
+    pass
