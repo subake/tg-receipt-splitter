@@ -1,3 +1,6 @@
+# Telethon logs
+bot.*
+
 # Bot configs and user data
 *.yaml
 
